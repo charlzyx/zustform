@@ -252,6 +252,38 @@ interface UseFieldOptions<T = any> {
   validateTrigger?: 'change' | 'blur' | 'submit' | ('change' | 'blur')[]
   preserveValue?: boolean
   transient?: boolean
+  
+  // 装饰器配置 (用于 FormItem 等容器组件)
+  label?: ReactNode
+  description?: ReactNode
+  decorator?: DecoratorConfig
+}
+
+// 装饰器配置
+interface DecoratorConfig {
+  // 装饰器组件 (如 FormItem, Form.Item 等)
+  component?: React.ComponentType<DecoratorProps>
+  // 传递给装饰器的额外 props
+  props?: Record<string, any>
+}
+
+// 装饰器组件接收的 props
+interface DecoratorProps {
+  // 字段元信息
+  label?: ReactNode
+  description?: ReactNode
+  required?: boolean
+  
+  // 校验状态
+  errors?: string[]
+  warnings?: string[]
+  validating?: boolean
+  
+  // 其他状态
+  disabled?: boolean
+  
+  // 子元素 (实际的输入控件)
+  children: ReactNode
 }
 
 interface UseFieldReturn<T = any> {
@@ -288,6 +320,13 @@ interface UseFieldReturn<T = any> {
   visible: boolean
   setDisabled: (disabled: boolean) => void
   setVisible: (visible: boolean) => void
+  
+  // 装饰器相关
+  label?: ReactNode
+  description?: ReactNode
+  
+  // 获取装饰器 props (传递给 FormItem 等)
+  getDecoratorProps: () => DecoratorProps
   
   // 便捷绑定 (Headless 核心)
   getInputProps: () => {
@@ -435,6 +474,7 @@ function LoginForm() {
   const form = useFormContext()
   
   const email = useField('email', {
+    label: '邮箱',
     rules: [
       { required: true, message: '请输入邮箱' },
       { type: 'email', message: '邮箱格式不正确' }
@@ -442,30 +482,32 @@ function LoginForm() {
   })
   
   const password = useField('password', {
+    label: '密码',
     rules: [{ required: true, message: '请输入密码' }]
   })
   
   const rememberMe = useField('rememberMe', {
+    label: '记住我',
     defaultValue: false
   })
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); form.submit() }}>
       <div>
-        <label>邮箱</label>
+        <label>{email.label}</label>
         <input {...email.getInputProps()} />
         {email.state.errors[0] && <span>{email.state.errors[0]}</span>}
       </div>
       
       <div>
-        <label>密码</label>
+        <label>{password.label}</label>
         <input type="password" {...password.getInputProps()} />
       </div>
       
       <div>
         <label>
           <input type="checkbox" {...rememberMe.getCheckboxProps()} />
-          记住我
+          {rememberMe.label}
         </label>
       </div>
       
@@ -475,16 +517,75 @@ function LoginForm() {
 }
 ```
 
-### 9.2 VoidField 布局
+### 9.2 使用 Decorator (FormItem)
+
+```tsx
+// 全局配置默认装饰器
+const form = createForm({
+  initialValues: {},
+  decorator: {
+    component: AntdFormItem,  // 默认使用 Ant Design 的 Form.Item
+  }
+})
+
+// 自定义 FormItem 包装
+function FormItem({ label, required, errors, validating, children }: DecoratorProps) {
+  return (
+    <div className="form-item">
+      <label>
+        {required && <span className="required">*</span>}
+        {label}
+      </label>
+      <div className="form-item-control">
+        {children}
+        {validating && <span className="loading">校验中...</span>}
+        {errors?.[0] && <span className="error">{errors[0]}</span>}
+      </div>
+    </div>
+  )
+}
+
+// 使用装饰器
+function MyForm() {
+  const email = useField('email', {
+    label: '邮箱',
+    decorator: { component: FormItem },
+    rules: [{ required: true }]
+  })
+  
+  // 方式1: 手动包装
+  return (
+    <FormItem {...email.getDecoratorProps()}>
+      <input {...email.getInputProps()} />
+    </FormItem>
+  )
+}
+
+// 方式2: 使用桥接组件 (自动包装)
+function MyForm() {
+  return (
+    <Field 
+      name="email" 
+      label="邮箱"
+      decorator={{ component: FormItem }}
+      rules={[{ required: true }]}
+    >
+      <Input />
+    </Field>
+  )
+}
+```
+
+### 9.3 VoidField 布局
 
 ```tsx
 function UserForm() {
   const basicInfo = useVoidField('basicInfo')
   const contactInfo = useVoidField('contactInfo')
   
-  const name = useField('name')
-  const age = useField('age')
-  const email = useField('email')
+  const name = useField('name', { label: '姓名' })
+  const age = useField('age', { label: '年龄' })
+  const email = useField('email', { label: '邮箱' })
   
   return (
     <div>
@@ -508,7 +609,7 @@ function UserForm() {
 // 不含 basicInfo/contactInfo
 ```
 
-### 9.3 数组字段
+### 9.4 数组字段
 
 ```tsx
 function UserList() {
@@ -540,7 +641,7 @@ function UserItem({ index, onRemove }: { index: number; onRemove: () => void }) 
 }
 ```
 
-### 9.4 联动示例
+### 9.5 联动示例
 
 ```tsx
 function MyForm() {
@@ -571,7 +672,7 @@ function MyForm() {
 }
 ```
 
-### 9.5 transient 字段
+### 9.6 transient 字段
 
 ```tsx
 function RegisterForm() {
