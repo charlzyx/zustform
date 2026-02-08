@@ -445,6 +445,8 @@ interface FormInstance<T> {
 
 ## 八、校验系统
 
+### 8.1 内置规则
+
 ```typescript
 interface ValidationRule {
   type?: 'string' | 'number' | 'email' | 'url' | 'pattern'
@@ -463,6 +465,192 @@ interface ValidatorContext {
   getFieldValue: (path: string) => any
   getFieldState: (address: string) => FieldState | undefined
 }
+```
+
+### 8.2 Schema 校验器适配
+
+支持 Zod、Yup、Valibot 等主流 schema 库，通过适配器模式接入：
+
+```typescript
+// 字段级 schema（推荐）
+interface UseFieldOptions<T = any> {
+  // 内置规则
+  rules?: ValidationRule[]
+  
+  // 或使用 schema（二选一，schema 优先级更高）
+  schema?: SchemaLike<T>
+}
+
+// 表单级 schema
+interface FormOptions<T> {
+  initialValues: T
+  
+  // 表单级 schema 校验（会自动拆分到各字段）
+  schema?: SchemaLike<T>
+  
+  // schema 解析器（自动检测或手动指定）
+  schemaResolver?: SchemaResolver
+}
+```
+
+### 8.3 适配器设计
+
+```typescript
+// 通用 Schema 接口
+type SchemaLike<T> = 
+  | ZodSchema<T>           // Zod
+  | YupSchema<T>           // Yup
+  | ValibotSchema<T>       // Valibot
+  | CustomSchema<T>        // 自定义
+
+// 校验器解析器
+interface SchemaResolver {
+  // 校验单个值
+  validate: (schema: SchemaLike<any>, value: any) => Promise<ValidationResult>
+  
+  // 校验整个表单
+  validateForm: (schema: SchemaLike<any>, values: any) => Promise<FormValidationResult>
+  
+  // 从表单 schema 中提取字段 schema（用于字段级校验）
+  pickFieldSchema?: (schema: SchemaLike<any>, path: string) => SchemaLike<any> | undefined
+}
+
+interface ValidationResult {
+  valid: boolean
+  errors: string[]
+}
+
+interface FormValidationResult {
+  valid: boolean
+  errors: Record<string, string[]>  // path -> errors
+}
+```
+
+### 8.4 内置解析器
+
+```typescript
+// Zod 解析器
+import { zodResolver } from 'zustform/resolvers/zod'
+
+// Yup 解析器
+import { yupResolver } from 'zustform/resolvers/yup'
+
+// Valibot 解析器
+import { valibotResolver } from 'zustform/resolvers/valibot'
+```
+
+### 8.5 使用示例
+
+```tsx
+// ===== Zod 示例 =====
+import { z } from 'zod'
+import { zodResolver } from 'zustform/resolvers/zod'
+
+const userSchema = z.object({
+  email: z.string().email('邮箱格式不正确'),
+  password: z.string().min(6, '密码至少6位'),
+  age: z.number().min(18, '必须年满18岁'),
+})
+
+// 方式1: 表单级 schema
+const form = createForm({
+  initialValues: { email: '', password: '', age: 0 },
+  schema: userSchema,
+  schemaResolver: zodResolver,
+})
+
+// 方式2: 字段级 schema
+function MyForm() {
+  const email = useField('email', {
+    schema: z.string().email('邮箱格式不正确')
+  })
+  
+  const password = useField('password', {
+    schema: z.string().min(6, '密码至少6位')
+  })
+  
+  return (...)
+}
+
+
+// ===== Yup 示例 =====
+import * as yup from 'yup'
+import { yupResolver } from 'zustform/resolvers/yup'
+
+const schema = yup.object({
+  email: yup.string().email().required(),
+  password: yup.string().min(6).required(),
+})
+
+const form = createForm({
+  initialValues: { email: '', password: '' },
+  schema,
+  schemaResolver: yupResolver,
+})
+
+
+// ===== 混合使用 =====
+function RegisterForm() {
+  // 简单字段用内置规则
+  const username = useField('username', {
+    rules: [{ required: true, message: '请输入用户名' }]
+  })
+  
+  // 复杂字段用 Zod
+  const email = useField('email', {
+    schema: z.string().email()
+  })
+  
+  // 自定义校验器
+  const code = useField('code', {
+    rules: [{
+      validator: async (value, ctx) => {
+        const valid = await checkCode(value)
+        if (!valid) return '验证码错误'
+      }
+    }]
+  })
+  
+  return (...)
+}
+```
+
+### 8.6 校验优先级
+
+当同时配置多种校验时：
+
+1. `schema` (Zod/Yup) - 最高优先级
+2. `rules` (内置规则) - 次优先级
+3. 表单级 `schema` 拆分到字段 - 最低优先级
+
+```typescript
+// schema 优先于 rules
+const field = useField('email', {
+  schema: z.string().email(),  // ✅ 生效
+  rules: [{ required: true }]  // ❌ 被忽略
+})
+```
+
+### 8.7 自定义解析器
+
+```typescript
+import { defineResolver } from 'zustform'
+
+// 适配其他校验库
+const myResolver = defineResolver({
+  validate: async (schema, value) => {
+    try {
+      await schema.parse(value)
+      return { valid: true, errors: [] }
+    } catch (e) {
+      return { valid: false, errors: extractErrors(e) }
+    }
+  },
+  
+  validateForm: async (schema, values) => {
+    // ...
+  }
+})
 ```
 
 ## 九、使用示例
