@@ -445,7 +445,21 @@ interface FormInstance<T> {
 
 ## 八、校验系统
 
-### 8.1 内置规则
+### 8.1 规则类型
+
+`rules` 统一支持内置规则和 Schema 校验：
+
+```typescript
+// 规则可以是内置规则对象，也可以是 Schema
+type FieldRules<T = any> = Array<ValidationRule | SchemaLike<T>>
+
+interface UseFieldOptions<T = any> {
+  // 统一的规则数组，支持混合使用
+  rules?: FieldRules<T>
+}
+```
+
+### 8.2 内置规则
 
 ```typescript
 interface ValidationRule {
@@ -467,33 +481,9 @@ interface ValidatorContext {
 }
 ```
 
-### 8.2 Schema 校验器适配
+### 8.3 Schema 规则
 
-支持 Zod、Yup、Valibot 等主流 schema 库，通过适配器模式接入：
-
-```typescript
-// 字段级 schema（推荐）
-interface UseFieldOptions<T = any> {
-  // 内置规则
-  rules?: ValidationRule[]
-  
-  // 或使用 schema（二选一，schema 优先级更高）
-  schema?: SchemaLike<T>
-}
-
-// 表单级 schema
-interface FormOptions<T> {
-  initialValues: T
-  
-  // 表单级 schema 校验（会自动拆分到各字段）
-  schema?: SchemaLike<T>
-  
-  // schema 解析器（自动检测或手动指定）
-  schemaResolver?: SchemaResolver
-}
-```
-
-### 8.3 适配器设计
+支持 Zod、Yup、Valibot 等主流 schema 库，直接放入 `rules` 数组：
 
 ```typescript
 // 通用 Schema 接口
@@ -503,15 +493,33 @@ type SchemaLike<T> =
   | ValibotSchema<T>       // Valibot
   | CustomSchema<T>        // 自定义
 
+// 表单级配置解析器
+interface FormOptions<T> {
+  initialValues: T
+  
+  // 表单级 schema（可选，自动拆分到各字段）
+  schema?: SchemaLike<T>
+  
+  // schema 解析器（自动检测或手动指定）
+  schemaResolver?: SchemaResolver
+}
+```
+
+### 8.4 解析器设计
+
+```typescript
 // 校验器解析器
 interface SchemaResolver {
+  // 检测是否为该类型的 schema
+  detect: (rule: any) => boolean
+  
   // 校验单个值
   validate: (schema: SchemaLike<any>, value: any) => Promise<ValidationResult>
   
-  // 校验整个表单
-  validateForm: (schema: SchemaLike<any>, values: any) => Promise<FormValidationResult>
+  // 校验整个表单（可选）
+  validateForm?: (schema: SchemaLike<any>, values: any) => Promise<FormValidationResult>
   
-  // 从表单 schema 中提取字段 schema（用于字段级校验）
+  // 从表单 schema 中提取字段 schema（可选）
   pickFieldSchema?: (schema: SchemaLike<any>, path: string) => SchemaLike<any> | undefined
 }
 
@@ -526,7 +534,7 @@ interface FormValidationResult {
 }
 ```
 
-### 8.4 内置解析器
+### 8.5 内置解析器
 
 ```typescript
 // Zod 解析器
@@ -537,85 +545,130 @@ import { yupResolver } from 'zustform/resolvers/yup'
 
 // Valibot 解析器
 import { valibotResolver } from 'zustform/resolvers/valibot'
+
+// 注册解析器（全局或表单级）
+import { registerResolver } from 'zustform'
+
+// 全局注册（一次配置，到处使用）
+registerResolver(zodResolver)
+registerResolver(yupResolver)
 ```
 
-### 8.5 使用示例
+### 8.6 使用示例
 
 ```tsx
-// ===== Zod 示例 =====
 import { z } from 'zod'
-import { zodResolver } from 'zustform/resolvers/zod'
+import * as yup from 'yup'
 
-const userSchema = z.object({
-  email: z.string().email('邮箱格式不正确'),
-  password: z.string().min(6, '密码至少6位'),
-  age: z.number().min(18, '必须年满18岁'),
+// ===== 统一在 rules 中使用 =====
+function RegisterForm() {
+  // 内置规则
+  const username = useField('username', {
+    rules: [
+      { required: true, message: '请输入用户名' },
+      { min: 2, max: 20, message: '2-20个字符' }
+    ]
+  })
+  
+  // Zod schema 放入 rules
+  const email = useField('email', {
+    rules: [
+      z.string().email('邮箱格式不正确')
+    ]
+  })
+  
+  // Yup schema 放入 rules
+  const password = useField('password', {
+    rules: [
+      yup.string().min(6, '密码至少6位').required('请输入密码')
+    ]
+  })
+  
+  // 混合使用：内置规则 + Schema + 自定义
+  const code = useField('code', {
+    rules: [
+      { required: true, message: '请输入验证码' },
+      z.string().length(6, '验证码为6位'),
+      {
+        validator: async (value, ctx) => {
+          const valid = await verifyCode(value)
+          if (!valid) return '验证码错误'
+        },
+        trigger: 'blur'
+      }
+    ]
+  })
+  
+  return (...)
+}
+
+
+// ===== 表单级 Schema =====
+const formSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  profile: z.object({
+    name: z.string(),
+    age: z.number().min(18)
+  })
 })
 
-// 方式1: 表单级 schema
 const form = createForm({
-  initialValues: { email: '', password: '', age: 0 },
-  schema: userSchema,
+  initialValues: { email: '', password: '', profile: { name: '', age: 0 } },
+  schema: formSchema,  // 自动拆分到各字段
   schemaResolver: zodResolver,
 })
-
-// 方式2: 字段级 schema
-function MyForm() {
-  const email = useField('email', {
-    schema: z.string().email('邮箱格式不正确')
-  })
-  
-  const password = useField('password', {
-    schema: z.string().min(6, '密码至少6位')
-  })
-  
-  return (...)
-}
-
-
-// ===== Yup 示例 =====
-import * as yup from 'yup'
-import { yupResolver } from 'zustform/resolvers/yup'
-
-const schema = yup.object({
-  email: yup.string().email().required(),
-  password: yup.string().min(6).required(),
-})
-
-const form = createForm({
-  initialValues: { email: '', password: '' },
-  schema,
-  schemaResolver: yupResolver,
-})
-
-
-// ===== 混合使用 =====
-function RegisterForm() {
-  // 简单字段用内置规则
-  const username = useField('username', {
-    rules: [{ required: true, message: '请输入用户名' }]
-  })
-  
-  // 复杂字段用 Zod
-  const email = useField('email', {
-    schema: z.string().email()
-  })
-  
-  // 自定义校验器
-  const code = useField('code', {
-    rules: [{
-      validator: async (value, ctx) => {
-        const valid = await checkCode(value)
-        if (!valid) return '验证码错误'
-      }
-    }]
-  })
-  
-  return (...)
-}
 ```
 
-### 8.6 校验优先级
+### 8.7 规则执行顺序
+
+`rules` 数组按顺序执行，遇到第一个错误即停止（可配置）：
+
+```typescript
+interface FormOptions<T> {
+  // 遇到第一个错误就停止
+  validateFirst?: boolean  // 默认 true
+}
+
+// 执行流程
+rules.forEach(rule => {
+  if (isSchemaLike(rule)) {
+    // 通过解析器校验
+    const resolver = detectResolver(rule)
+    return resolver.validate(rule, value)
+  } else {
+    // 内置规则校验
+    return validateBuiltinRule(rule, value)
+  }
+})
+```
+
+### 8.8 自定义解析器
+
+```typescript
+import { defineResolver, registerResolver } from 'zustform'
+
+// 适配其他校验库
+const myResolver = defineResolver({
+  // 检测规则类型
+  detect: (rule) => rule instanceof MySchema,
+  
+  // 校验实现
+  validate: async (schema, value) => {
+    try {
+      await schema.validate(value)
+      return { valid: true, errors: [] }
+    } catch (e) {
+      return { valid: false, errors: [e.message] }
+    }
+  }
+})
+
+// 注册
+registerResolver(myResolver)
+```
+
+## 九、使用示例
 
 当同时配置多种校验时：
 
