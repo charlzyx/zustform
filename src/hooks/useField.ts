@@ -3,115 +3,108 @@
  * @description Hook for managing individual form fields
  */
 
-import { useEffect, useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import type { FormStore } from '../core/store'
 import type { UseFieldReturn, UseFieldOptions, FieldMeta } from '../core/types'
-import { get, set, has } from '../core/path'
+import { get } from '../core/path'
 
 /**
- * Helper to create prop getters for different input types
+ * Helper to create component props (universal for all input types)
  */
-function createPropGetters<T>(
+function createComponentProps<T>(
   store: FormStore<any>,
   path: string,
   meta: FieldMeta
-): UseFieldReturn<T>['propGetters'] {
-  return {
-    // Text/Radio input props
-    getInputProps: (extraProps = {}) => ({
-      name: path,
-      value: get(store.values, path) as string,
-      checked: undefined,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value
-        store.setValue(path, value as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
-    }),
+): UseFieldReturn<T>['getComponentProps'] {
+  return useCallback(
+    (extraProps = {}) => {
+      const value = get(store.values, path)
 
-    // Checkbox input props
-    getCheckboxProps: (extraProps = {}) => ({
-      name: path,
-      type: 'checkbox',
-      value: undefined,
-      checked: !!get(store.values, path) as boolean,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-        const checked = e.target.checked
-        store.setValue(path, checked as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
-    }),
+      return {
+        // Standard form props
+        name: path,
+        value,
+        onChange: (e: React.ChangeEvent<any>) => {
+          // Handle different input types
+          let nextValue: any
 
-    // Radio input props (single option)
-    getRadioProps: (value: any, extraProps = {}) => ({
-      name: path,
-      type: 'radio',
-      value,
-      checked: get(store.values, path) === value,
-      onChange: () => {
-        store.setValue(path, value as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
-    }),
+          if (e?.target) {
+            // Standard DOM event
+            const target = e.target
 
-    // Select input props
-    getSelectProps: (extraProps = {}) => ({
-      name: path,
-      value: get(store.values, path),
-      checked: undefined,
-      onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const value = e.target.value
-        store.setValue(path, value as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
-    }),
+            // Handle checkbox
+            if (target.type === 'checkbox') {
+              nextValue = target.checked
+            }
+            // Handle radio
+            else if (target.type === 'radio') {
+              nextValue = target.value
+            }
+            // Handle select multiple
+            else if (target.multiple) {
+              const options = target.selectedOptions || []
+              nextValue = Array.from(options).map((opt: any) => opt.value)
+            }
+            // Handle file
+            else if (target.type === 'file') {
+              nextValue = target.files?.[0] || null
+            }
+            // Handle text inputs
+            else {
+              nextValue = target.value
+            }
+          } else {
+            // Custom value (e.g., for custom components)
+            nextValue = e
+          }
 
-    // Multiselect input props
-    getMultiselectProps: (extraProps = {}) => ({
-      name: path,
-      value: undefined,
-      checked: undefined,
-      multiple: true,
-      checked: false,
-      options: undefined,
-      onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
-        store.setValue(path, selected as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
-    }),
+          store.setValue(path, nextValue)
+          meta.setTouched()
+          meta.setDirty()
+        },
+        onBlur: () => meta.setTouched(),
+        onFocus: () => meta.setFocus(true),
 
-    // File input props
-    getFileProps: (extraProps = {}) => ({
-      name: path,
-      type: 'file',
-      value: undefined,
-      checked: undefined,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        store.setValue(path, file as any)
-        meta.setTouched()
-      },
-      onBlur: () => meta.setTouched(),
-      onFocus: () => meta.setFocus(true),
-      ...extraProps,
+        // Merge with extra props (extraProps can override defaults)
+        ...extraProps,
+      }
+    },
+    [store, path, meta]
+  )
+}
+
+/**
+ * Helper to create decorator props (for wrapper/form item components)
+ *
+ * These props are typically used by form wrapper components
+ * like Ant Design Form.Item, Material UI FormControl, etc.
+ */
+function createDecoratorProps<T>(
+  store: FormStore<any>,
+  path: string,
+  meta: FieldMeta
+): UseFieldReturn<T>['getDecoratorProps'] {
+  return useMemo(
+    () => ({
+      // Field state (for validation display)
+      error: meta.error,
+      touched: meta.touched,
+      dirty: meta.dirty,
+      isValid: !meta.error,
+      isInvalid: !!meta.error,
+      isValidating: false, // TODO: Get from field-level validating state
+
+      // Helper methods
+      setError: meta.setError,
+      clearError: meta.clearError,
+      setTouched: meta.setTouched,
+      setDirty: meta.setDirty,
+
+      // Value access
+      value: meta.value,
     }),
-  }
+    [meta]
+  )
 }
 
 /**
@@ -122,15 +115,14 @@ function createFieldMeta(
   path: string
 ): FieldMeta {
   return {
-    touched: has(store.touched, path) && get(store.touched, path),
-    dirty: has(store.dirty, path) && get(store.dirty, path),
-    error: get(store.errors, path),
-    value: get(store.values, path),
+    touched: store.touched[path] || false,
+    dirty: store.dirty[path] || false,
+    error: store.errors[path],
+    value: store.values[path],
     setTouched: () => store.setFieldTouched(path, true),
     setDirty: () => store.setFieldDirty(path, true),
     setFocus: (focused: boolean) => {
-      // Store focus state in a separate mechanism if needed
-      // For now, just a placeholder
+      // Optional: Store focus state if needed
     },
     setValue: (value: any) => store.setValue(path, value),
     setError: (error: any) => store.setFieldError(path, error),
@@ -145,12 +137,29 @@ function createFieldMeta(
  * @param options - Field options
  *
  * @example
- * const { value, error, touched, getInputProps } = useField('user.name')
- * return <input {...getInputProps()} />
+ * // Basic usage with native inputs
+ * const { getComponentProps, error } = useField('username')
+ * return <input {...getComponentProps()} />
+ *
+ * @example
+ * // With decorator (Ant Design style)
+ * const { getComponentProps, getDecoratorProps } = useField('username')
+ * return (
+ *   <Form.Item {...getDecoratorProps()}>
+ *     <Input {...getComponentProps()} />
+ *   </Form.Item>
+ * )
+ *
+ * @example
+ * // With custom value format
+ * const { getComponentProps } = useField('age', {
+ *   format: (value) => value ? Number(value) : ''
+ * })
+ * return <input type="number" {...getComponentProps()} />
  */
 export function useField<T>(
   path: string,
-  options: UseFieldOptions = {}
+  options: UseFieldOptions<T> = {}
 ): UseFieldReturn<T> {
   // Get form store from context
   // TODO: Implement context provider
@@ -158,8 +167,8 @@ export function useField<T>(
 
   const {
     subscribe = false, // Default to no subscription for performance
-    mode = 'control', // 'control' | 'controlled' | 'uncontrolled'
-    // validation = undefined,
+    validateOn = 'onBlur', // 'onBlur' | 'onChange' | 'onSubmit'
+    validation,
   } = options
 
   // Subscribe to specific field state based on subscription mode
@@ -174,39 +183,109 @@ export function useField<T>(
     }
 
     // Only subscribe to what's needed
+    const values = store.values
+    const errors = store.errors
+    const touched = store.touched
+    const dirty = store.dirty
+
     if (subscribe) {
       return {
-        value: subscribe.value !== false ? get(store.values, path) : undefined,
-        error: subscribe.error !== false ? get(store.errors, path) : undefined,
-        touched: subscribe.touched !== false ? get(store.touched, path) : undefined,
-        dirty: subscribe.dirty !== false ? get(store.dirty, path) : undefined,
+        value: subscribe.value !== false ? values[path] : undefined,
+        error: subscribe.error !== false ? errors[path] : undefined,
+        touched: subscribe.touched !== false ? (touched[path] || false) : undefined,
+        dirty: subscribe.dirty !== false ? (dirty[path] || false) : undefined,
       }
     }
 
     return {
-      value: get(store.values, path),
-      error: get(store.errors, path),
-      touched: has(store.touched, path) && get(store.touched, path),
-      dirty: has(store.dirty, path) && get(store.dirty, path),
+      value: values[path],
+      error: errors[path],
+      touched: touched[path] || false,
+      dirty: dirty[path] || false,
     }
   }, [store, path, subscribe])
+
+  // Format value if formatter provided
+  const displayValue = useMemo(() => {
+    if (options.format && fieldState.value !== undefined) {
+      return options.format(fieldState.value)
+    }
+    return fieldState.value
+  }, [fieldState.value, options.format])
 
   const meta = useMemo(
     () => createFieldMeta(store, path),
     [store, path]
   )
 
-  const propGetters = useMemo(
-    () => createPropGetters<T>(store, path, meta),
-    [store, path, meta]
+  // Create component props with formatted value
+  const getComponentProps = useMemo(
+    () => ({
+      name: path,
+      value: displayValue,
+      onChange: (e: React.ChangeEvent<any>) => {
+        let nextValue: any
+
+        // Parse value if parser provided
+        if (e?.target) {
+          const target = e.target
+
+          if (target.type === 'checkbox') {
+            nextValue = target.checked
+          } else if (target.type === 'radio') {
+            nextValue = target.value
+          } else if (target.multiple) {
+            const options = target.selectedOptions || []
+            nextValue = Array.from(options).map((opt: any) => opt.value)
+          } else if (target.type === 'file') {
+            nextValue = target.files?.[0] || null
+          } else {
+            nextValue = options.parser ? options.parser(target.value) : target.value
+          }
+        } else {
+          nextValue = e
+        }
+
+        store.setValue(path, nextValue as any)
+        meta.setTouched()
+        meta.setDirty()
+
+        // Trigger validation based on validateOn mode
+        if (validateOn === 'onChange' && validation) {
+          // TODO: Run validation
+        }
+      },
+      onBlur: () => {
+        meta.setTouched()
+
+        // Trigger validation on blur if configured
+        if (validateOn === 'onBlur' && validation) {
+          // TODO: Run validation
+        }
+      },
+      onFocus: () => {
+        meta.setFocus(true)
+      },
+    }),
+    [store, path, displayValue, meta, validateOn, validation, options.parser]
   )
 
-  // Run validation on value change if enabled
-  useEffect(() => {
-    if (options.validate && mode === 'controlled') {
-      // TODO: Implement validation
-    }
-  }, [fieldState.value, options.validate, mode, path])
+  // Create decorator props
+  const getDecoratorProps = useMemo(
+    () => ({
+      error: meta.error,
+      touched: meta.touched,
+      dirty: meta.dirty,
+      isValid: !meta.error,
+      isInvalid: !!meta.error,
+      setError: meta.setError,
+      clearError: meta.clearError,
+      setTouched: meta.setTouched,
+      setDirty: meta.setDirty,
+      value: meta.value,
+    }),
+    [meta]
+  )
 
   return {
     // Field state
@@ -219,9 +298,10 @@ export function useField<T>(
     meta,
 
     // Prop getters
-    propGetters,
+    getComponentProps,
+    getDecoratorProps,
 
-    // Helper functions
+    // Helper functions (backward compatibility)
     setValue: (value: T) => store?.setValue(path, value),
     setError: (error: any) => store?.setFieldError(path, error),
     clearError: () => store?.clearFieldError(path),
