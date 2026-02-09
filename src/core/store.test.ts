@@ -104,6 +104,26 @@ describe('createFormStore', () => {
   describe('resetValues', () => {
     it('should reset values to initial', () => {
       const api = store.getState()
+      // Register field first
+      api.registerField('username', {
+        address: 'username',
+        path: 'username',
+        isVoid: false,
+        transient: false,
+        rules: [],
+        mounted: true,
+        state: {
+          touched: false,
+          active: false,
+          dirty: false,
+          visible: true,
+          disabled: false,
+          readOnly: false,
+          validating: false,
+          errors: [],
+          warnings: [],
+        },
+      })
       api.setValues({ username: 'John', email: 'john@example.com' })
       api.setFieldState('username', { touched: true, errors: ['Error'] })
 

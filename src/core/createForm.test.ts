@@ -78,6 +78,28 @@ describe('createForm', () => {
     })
 
     it('should reset values to initial', () => {
+      // Register field first
+      const store = form.getStore()
+      store.registerField('username', {
+        address: 'username',
+        path: 'username',
+        isVoid: false,
+        transient: false,
+        rules: [],
+        mounted: true,
+        state: {
+          touched: false,
+          active: false,
+          dirty: false,
+          visible: true,
+          disabled: false,
+          readOnly: false,
+          validating: false,
+          errors: [],
+          warnings: [],
+        },
+      })
+
       form.setValues({ username: 'John', email: 'john@example.com' })
       form.setFieldState('username', { touched: true })
 

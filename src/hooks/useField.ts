@@ -234,7 +234,7 @@ export function useField<T = any>(
     return {
       value,
       onChange: (e: any) => {
-        const newValue = 'target' in e ? e.target.value : e
+        const newValue = e && typeof e === 'object' && 'target' in e ? e.target.value : e
         onChange(newValue as T)
       },
       onBlur,
@@ -249,7 +249,7 @@ export function useField<T = any>(
     return {
       checked: value as unknown === true,
       onChange: (e: any) => {
-        const checked = 'target' in e ? e.target.checked : e
+        const checked = e && typeof e === 'object' && 'target' in e ? e.target.checked : e
         onChange(checked as T)
       },
       disabled: state.disabled,
@@ -324,6 +324,9 @@ export function useField<T = any>(
       validating: state.validating,
       errors: state.errors,
       warnings: state.warnings,
+      disabled: state.disabled,
+      readOnly: state.readOnly,
+      visible: state.visible,
     },
 
     // State operations
