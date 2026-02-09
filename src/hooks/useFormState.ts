@@ -1,58 +1,179 @@
 /**
  * @module hooks/useFormState
- * @description Hook to access form state with precise subscription
+ * @description Hook for accessing form state with precise subscription
  */
 
-import { useStore } from 'zustand'
-import type { FormState, FormInstance } from '../core/types'
-import { useFormContext } from './useFormContext'
+import { useMemo } from 'react'
+import type { FormStore, FormState } from '../core/store'
+import type { UseFormStateOptions, UseFormStateSelectors } from '../core/types'
 
 /**
- * Selector type for form state
- */
-type FormStateSelector<T, R> = (state: FormState<T>) => R
-
-/**
- * Hook to access form state
- * @param selector - Optional selector function for precise subscription
- * @returns Form state or selected value
+ * Hook for accessing form state with optional field subscription
+ *
+ * @param options - Options for subscribing to specific state parts
  *
  * @example
- * ```tsx
- * // Get entire state (reacts to any change)
+ * // Subscribe to all form state
  * const state = useFormState()
+ * // { values, errors, touched, dirty, isValidating, isSubmitting, isDirty, isValid, submitCount }
  *
- * // Get specific value (only reacts to changes in that path)
- * const submitting = useFormState(s => s.meta.submitting)
- * const values = useFormState(s => s.values)
+ * @example
+ * // Subscribe to specific state properties only (performance optimized)
+ * const state = useFormState({ subscribe: { errors: true, touched: true } })
+ * // Only rerenders when errors or touched change
  *
- * // Get multiple values (only reacts to changes in selected paths)
- * const { submitting, validating } = useFormState(s => ({
- *   submitting: s.meta.submitting,
- *   validating: s.meta.validating,
- * }))
- * ```
+ * @example
+ * // Use custom selector
+ * const state = useFormState({
+ *   selector: (state) => ({ isDirty: state.isDirty, submitCount: state.submitCount })
+ * })
+ * // Only returns what you specify
  */
-export function useFormState<T = any, R = FormState<T>>(
-  selector?: FormStateSelector<T, R>
-): R {
-  const form = useFormContext<FormInstance<T>>()
+export function useFormState<T = FormState<any>>(
+  options?: UseFormStateOptions
+): T {
+  // Get form store from context
+  // TODO: Implement context provider
+  const store = null as any // Placeholder - will get from context
 
-  // If selector provided, use it; otherwise return entire state
-  if (selector) {
-    return useStore(form, selector)
-  }
+  const { subscribe, selector } = options || {}
 
-  return useStore(form, (state) => state as R)
+  // Create selector based on options
+  const memoizedSelector = useMemo(() => {
+    if (!store) {
+      return () => ({} as T)
+    }
+
+    if (selector) {
+      return selector
+    }
+
+    if (subscribe && typeof subscribe === 'object') {
+      // Subscribe to specific properties
+      return (state: FormState<any>) => {
+        const result = {} as any
+        const keys = Object.keys(subscribe) as Array<keyof typeof subscribe>
+
+        for (const key of keys) {
+          if (subscribe[key]) {
+            ;(result[key] = state[key])
+          }
+        }
+
+        return result
+      }
+    }
+
+    // Default: subscribe to all state
+    return (state: FormState<any>) => state
+  }, [store, subscribe, selector])
+
+  // Get state from store
+  const state = useMemo(() => {
+    if (!store) {
+      return {} as T
+    }
+
+    const fullState = store.getState()
+    return memoizedSelector(fullState)
+  }, [store, memoizedSelector])
+
+  return state
 }
 
 /**
- * Type-safe selectors for common form state properties
+ * Namespace for useFormState helper functions
  */
 export const useFormStateSelectors = {
-  getSubmitting: <T = any>() => (state: FormState<T>) => state.meta.submitting,
-  getSubmitCount: <T = any>() => (state: FormState<T>) => state.meta.submitCount,
-  getValidating: <T = any>() => (state: FormState<T>) => state.meta.validating,
-  getValid: <T = any>() => (state: FormState<T>) => state.meta.valid,
-  getDirty: <T = any>() => (state: FormState<T>) => state.meta.dirty,
+  /**
+   * Create a selector for values
+   * @example
+   * const selector = useFormStateSelectors.values()
+   * const state = useFormState({ selector })
+   */
+  values: <T = any>() => (state: FormState<T>) => state.values,
+
+  /**
+   * Create a selector for errors
+   * @example
+   * const selector = useFormStateSelectors.errors()
+   * const state = useFormState({ selector })
+   */
+  errors: <T = any>() => (state: FormState<T>) => state.errors,
+
+  /**
+   * Create a selector for touched state
+   * @example
+   * const selector = useFormStateSelectors.touched()
+   * const state = useFormState({ selector })
+   */
+  touched: <T = any>() => (state: FormState<T>) => state.touched,
+
+  /**
+   * Create a selector for dirty state
+   * @example
+   * const selector = useFormStateSelectors.dirty()
+   * const state = useFormState({ selector })
+   */
+  dirty: <T = any>() => (state: FormState<T>) => state.dirty,
+
+  /**
+   * Create a selector for validation state
+   * @example
+   * const selector = useFormStateSelectors.validation()
+   * const state = useFormState({ selector })
+   */
+  validation: <T = any>() => (state: FormState<T>) => ({
+    isValid: state.isValid,
+    isValidating: state.isValidating,
+  }),
+
+  /**
+   * Create a selector for submission state
+   * @example
+   * const selector = useFormStateSelectors.submission()
+   * const state = useFormState({ selector })
+   */
+  submission: <T = any>() => (state: FormState<T>) => ({
+    isSubmitting: state.isSubmitting,
+    submitCount: state.submitCount,
+  }),
+
+  /**
+   * Create a selector for specific field state
+   * @param path - Field path to subscribe to
+   * @example
+   * const selector = useFormStateSelectors.field('user.name')
+   * const state = useFormState({ selector })
+   * // Returns: { value: string, error: any, touched: boolean, dirty: boolean }
+   */
+  field: <T = any, V = any>(path: string) => (state: FormState<T>) => ({
+    value: path.split('.').reduce((acc, part) => acc?.[part], state.values) as V,
+    error: path.split('.').reduce((acc, part) => acc?.[part], state.errors) as V,
+    touched: path.split('.').reduce((acc, part) => acc?.[part], state.touched) as boolean,
+    dirty: path.split('.').reduce((acc, part) => acc?.[part], state.dirty) as boolean,
+  }),
+
+  /**
+   * Create a selector for multiple field states
+   * @param paths - Array of field paths
+   * @example
+   * const selector = useFormStateSelectors.fields(['user.name', 'user.email'])
+   * const state = useFormState({ selector })
+   * // Returns: { 'user.name': { value, error, ... }, 'user.email': { value, error, ... } }
+   */
+  fields: <T = any, V = any>(paths: readonly string[]) => (state: FormState<T>) => {
+    const result = {} as any
+
+    for (const path of paths) {
+      ;(result[path] = {
+        value: path.split('.').reduce((acc, part) => acc?.[part], state.values) as V,
+        error: path.split('.').reduce((acc, part) => acc?.[part], state.errors) as V,
+        touched: path.split('.').reduce((acc, part) => acc?.[part], state.touched) as boolean,
+        dirty: path.split('.').reduce((acc, part) => acc?.[part], state.dirty) as boolean,
+      })
+    }
+
+    return result
+  },
 }

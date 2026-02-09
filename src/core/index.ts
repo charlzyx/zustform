@@ -3,8 +3,24 @@
  * @description Re-export all core functionality
  */
 
+// Types
 export * from './types'
-export * from './createForm'
+
+// Create form
+export { createForm } from './createForm'
+
+// Store
+export { createFormStore } from './store'
+export type { FormStore } from './store'
+
+// Validation
 export * from './validation'
-export * from './store'
+
+// Path utilities
 export * from './path'
+
+// Object utilities
+export * from './object'
+
+// Array utilities
+export * from './array'
