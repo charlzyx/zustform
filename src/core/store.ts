@@ -211,10 +211,9 @@ export function createFormStore<T>(options: FormOptions<T>) {
       // === Batch updates ===
 
       batch: (fn) => {
-        set((state) => {
-          // Enable Immer's batch mode
-          fn()
-        })
+        // Execute the function - each inner set() will trigger a state update
+        // Note: For true batching, you'd need to accumulate mutations and apply them in a single set()
+        fn()
       },
     }))
   )
