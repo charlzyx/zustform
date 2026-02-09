@@ -3,12 +3,15 @@
  * @description Zod schema resolver for ZustForm validation
  */
 
-import type { z } from 'zod'
+import * as zod from 'zod'
 import type {
   ValidationRule,
   ValidatorContext,
   Path,
 } from '../core/types'
+
+// Re-export z for type usage
+export type { z } from 'zod'
 
 /**
  * Zod resolver error format
@@ -16,7 +19,7 @@ import type {
 export interface ZodFieldError {
   path: string[]
   message: string
-  code: z.ZodIssue['code']
+  code: zod.ZodIssue['code']
 }
 
 /**
@@ -31,25 +34,25 @@ export interface ZodFieldError {
  * import { z } from 'zod'
  * import { zodResolver } from 'zustform/resolvers'
  *
- * const schema = z.object({
- *   username: z.string().min(3).max(20),
- *   email: z.string().email(),
- *   age: z.number().min(18),
+ * const schema = zod.object({
+ *   username: zod.string().min(3).max(20),
+ *   email: zod.string().email(),
+ *   age: zod.number().min(18),
  * })
  *
  * const rules = zodResolver(schema)
  * // Returns: { username: [...], email: [...], age: [...] }
  * ```
  */
-export function zodResolver<T extends z.ZodTypeAny>(
+export function zodResolver<T extends zod.ZodTypeAny>(
   schema: T
 ): Record<string, ValidationRule[]> {
   const rules: Record<string, ValidationRule[]> = {}
 
-  if (schema instanceof z.ZodObject) {
+  if (schema instanceof zod.ZodObject) {
     const shape = schema.shape
     for (const [key, value] of Object.entries(shape)) {
-      rules[key] = zodTypeToRules(value as z.ZodTypeAny, key)
+      rules[key] = zodTypeToRules(value as zod.ZodTypeAny, key)
     }
   }
 
@@ -59,98 +62,98 @@ export function zodResolver<T extends z.ZodTypeAny>(
 /**
  * Convert a Zod type to ValidationRule array
  */
-function zodTypeToRules(zodType: z.ZodTypeAny, path: string): ValidationRule[] {
+function zodTypeToRules(zodType: zod.ZodTypeAny, path: string): ValidationRule[] {
   const rules: ValidationRule[] = []
+  let hasDefault = false
+  let isOptional = false
+  let isNullable = false
 
   // Process the Zod type to extract validation rules
-  const processType = (type: z.ZodTypeAny): void => {
+  const processType = (type: zod.ZodTypeAny): void => {
     // Check for ZodEffects (refined schemas, transformed, etc.)
-    if (type instanceof z.ZodEffects) {
+    if (type instanceof zod.ZodEffects) {
       processType(type._def.schema)
       return
     }
 
     // Check for ZodOptional or ZodNullable
-    if (type instanceof z.ZodOptional || type instanceof z.ZodNullable) {
+    if (type instanceof zod.ZodOptional) {
+      isOptional = true
+      processType(type.unwrap())
+      return
+    }
+
+    if (type instanceof zod.ZodNullable) {
+      isNullable = true
       processType(type.unwrap())
       return
     }
 
     // Check for ZodDefault
-    if (type instanceof z.ZodDefault) {
+    if (type instanceof zod.ZodDefault) {
+      hasDefault = true
       processType(type._def.innerType)
       return
     }
 
     // Check for ZodString
-    if (type instanceof z.ZodString) {
-      rules.push({ type: 'string' })
+    if (type instanceof zod.ZodString) {
+      // Check for email/url refinements
+      const checks = (type as any)._def.checks || []
+      const hasEmail = checks.some((c: any) => c.kind === 'email')
+      const hasURL = checks.some((c: any) => c.kind === 'url')
+
+      if (hasEmail) {
+        rules.push({ type: 'email' })
+      } else if (hasURL) {
+        rules.push({ type: 'url' })
+      } else {
+        rules.push({ type: 'string' })
+      }
+
+      // Check for regex pattern
+      const regexCheck = checks.find((c: any) => c.kind === 'regex')
+      if (regexCheck) {
+        rules.push({ pattern: regexCheck.regex, message: 'Pattern validation failed' })
+      }
 
       // Check for min length
-      const minLength = (type as any).minLength
-      if (minLength !== undefined && minLength !== null) {
+      const minLength = checks.find((c: any) => c.kind === 'min')
+      if (minLength) {
         rules.push({ min: minLength.value, message: minLength.message })
       }
 
       // Check for max length
-      const maxLength = (type as any).maxLength
-      if (maxLength !== undefined && maxLength !== null) {
+      const maxLength = checks.find((c: any) => c.kind === 'max')
+      if (maxLength) {
         rules.push({ max: maxLength.value, message: maxLength.message })
-      }
-
-      // Check for exact length
-      const exactLength = (type as any).length
-      if (exactLength !== undefined && exactLength !== null) {
-        rules.push({ len: exactLength.value, message: exactLength.message })
-      }
-
-      // Check for email
-      if ((type as any).dataType === 'email') {
-        rules.push({ type: 'email' })
-      }
-
-      // Check for url
-      if ((type as any).dataType === 'url') {
-        rules.push({ type: 'url' })
-      }
-
-      // Check for regex pattern
-      const regex = (type as any).regex
-      if (regex) {
-        rules.push({ pattern: regex.regex, message: regex.message })
       }
     }
 
     // Check for ZodNumber
-    if (type instanceof z.ZodNumber) {
+    if (type instanceof zod.ZodNumber) {
       rules.push({ type: 'number' })
 
-      // Check for min value
-      const minValue = (type as any).minValue
-      if (minValue !== undefined && minValue !== null) {
-        rules.push({ min: minValue.value, message: minValue.message })
-      }
+      // Check for min/max value (stored in checks in Zod v3)
+      const checks = (type as any)._def.checks || []
+      const minCheck = checks.find((c: any) => c.kind === 'min')
+      const maxCheck = checks.find((c: any) => c.kind === 'max')
 
-      // Check for max value
-      const maxValue = (type as any).maxValue
-      if (maxValue !== undefined && maxValue !== null) {
-        rules.push({ max: maxValue.value, message: maxValue.message })
+      if (minCheck) {
+        rules.push({ min: minCheck.value, message: minCheck.message })
+      }
+      if (maxCheck) {
+        rules.push({ max: maxCheck.value, message: maxCheck.message })
       }
     }
 
     // Check for ZodBoolean
-    if (type instanceof z.ZodBoolean) {
+    if (type instanceof zod.ZodBoolean) {
       // No specific rules needed for boolean
     }
 
-    // Check for required (no optional/nullable wrapper)
-    // This is implicitly handled - if there's no optional wrapper, it's required
-    const isOptional =
-      type instanceof z.ZodOptional ||
-      type instanceof z.ZodNullable ||
-      type instanceof z.ZodDefault
-
-    if (!isOptional) {
+    // Check for required (no optional/nullable/default wrapper)
+    if (!isOptional && !isNullable && !hasDefault) {
       // Add required rule at the beginning
       const hasRequired = rules.some((r) => r.required === true)
       if (!hasRequired) {
@@ -176,9 +179,9 @@ function zodTypeToRules(zodType: z.ZodTypeAny, path: string): ValidationRule[] {
  * import { z } from 'zod'
  * import { zodValidator } from 'zustform/resolvers'
  *
- * const schema = z.object({
- *   username: z.string().min(3),
- *   email: z.string().email(),
+ * const schema = zod.object({
+ *   username: zod.string().min(3),
+ *   email: zod.string().email(),
  * })
  *
  * // In your form options:
@@ -188,13 +191,13 @@ function zodTypeToRules(zodType: z.ZodTypeAny, path: string): ValidationRule[] {
  * })
  * ```
  */
-export function zodValidator<T extends z.ZodTypeAny>(
+export function zodValidator<T extends zod.ZodTypeAny>(
   schema: T,
   options?: {
     // Whether to use the Zod error messages (default: true)
     useZodMessages?: boolean
     // Custom error formatter
-    formatError?: (error: z.ZodError) => Record<string, string[]>
+    formatError?: (error: zod.ZodError) => Record<string, string[]>
   }
 ): (values: unknown) => Promise<Record<string, string[]>> {
   return async (values: unknown) => {
@@ -202,7 +205,7 @@ export function zodValidator<T extends z.ZodTypeAny>(
       await schema.parseAsync(values)
       return {}
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (error instanceof zod.ZodError) {
         if (options?.formatError) {
           return options.formatError(error)
         }
@@ -236,7 +239,7 @@ export function zodValidator<T extends z.ZodTypeAny>(
  * import { z } from 'zod'
  * import { zodFieldValidator } from 'zustform/resolvers'
  *
- * const emailSchema = z.string().email('Invalid email format')
+ * const emailSchema = zod.string().email('Invalid email format')
  *
  * // In your field options:
  * useField('email', {
@@ -244,7 +247,7 @@ export function zodValidator<T extends z.ZodTypeAny>(
  * })
  * ```
  */
-export function zodFieldValidator<T extends z.ZodTypeAny>(
+export function zodFieldValidator<T extends zod.ZodTypeAny>(
   schema: T,
   options?: {
     message?: string
@@ -256,7 +259,7 @@ export function zodFieldValidator<T extends z.ZodTypeAny>(
         await schema.parseAsync(value)
         return
       } catch (error) {
-        if (error instanceof z.ZodError) {
+        if (error instanceof zod.ZodError) {
           const message = options?.message || error.errors[0]?.message || 'Validation failed'
           return message
         }
