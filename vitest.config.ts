@@ -4,6 +4,12 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     globals: true,
+    server: {
+      deps: {
+        // Inline Zod to avoid resolution issues
+        inline: ['zod'],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

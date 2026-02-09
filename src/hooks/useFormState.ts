@@ -4,28 +4,28 @@
  */
 
 import { useStore } from 'zustand'
-import type { FormState } from '../core/types'
+import type { FormState, FormInstance } from '../core/types'
 import { useFormContext } from './useFormContext'
 
 /**
  * Selector type for form state
  */
-type FormStateSelector = (state: FormState) => any
+type FormStateSelector<T, R> = (state: FormState<T>) => R
 
 /**
  * Hook to access form state
  * @param selector - Optional selector function for precise subscription
  * @returns Form state or selected value
- * 
+ *
  * @example
  * ```tsx
  * // Get entire state (reacts to any change)
  * const state = useFormState()
- * 
+ *
  * // Get specific value (only reacts to changes in that path)
  * const submitting = useFormState(s => s.meta.submitting)
  * const values = useFormState(s => s.values)
- * 
+ *
  * // Get multiple values (only reacts to changes in selected paths)
  * const { submitting, validating } = useFormState(s => ({
  *   submitting: s.meta.submitting,
@@ -33,24 +33,26 @@ type FormStateSelector = (state: FormState) => any
  * }))
  * ```
  */
-export function useFormState<R = FormState>(selector: FormStateSelector): R {
-  const context = useFormContext()
-  
-  if (!context) {
-    throw new Error('useFormState must be used within a FormProvider')
-  }
-  
+export function useFormState<T = any, R = FormState<T>>(
+  selector?: FormStateSelector<T, R>
+): R {
+  const form = useFormContext<FormInstance<T>>()
+
   // If selector provided, use it; otherwise return entire state
-  return useStore(context, selector)
+  if (selector) {
+    return useStore(form, selector)
+  }
+
+  return useStore(form, (state) => state as R)
 }
 
 /**
  * Type-safe selectors for common form state properties
  */
 export const useFormStateSelectors = {
-  getSubmitting: () => (state: FormState) => state.meta.submitting,
-  getSubmitCount: () => (state: FormState) => state.meta.submitCount,
-  getValidating: () => (state: FormState) => state.meta.validating,
-  getValid: () => (state: FormState) => state.meta.valid,
-  getDirty: () => (state: FormState) => state.meta.dirty,
+  getSubmitting: <T = any>() => (state: FormState<T>) => state.meta.submitting,
+  getSubmitCount: <T = any>() => (state: FormState<T>) => state.meta.submitCount,
+  getValidating: <T = any>() => (state: FormState<T>) => state.meta.validating,
+  getValid: <T = any>() => (state: FormState<T>) => state.meta.valid,
+  getDirty: <T = any>() => (state: FormState<T>) => state.meta.dirty,
 }
