@@ -1,194 +1,109 @@
 /**
  * @module core/createForm
- * @description Form instance factory
+ * @description Factory function to create a form instance
  */
 
-import type { FormState, FormOptions, FormInstance, Path } from './types'
-import { validateField } from './validation'
+import type {
+  FormValues,
+  FormInstance,
+  CreateFormOptions,
+  FormState,
+  UseFieldReturn,
+} from './types'
 import { createFormStore } from './store'
-import { deepEqual, deletePath, deepClone } from './path'
 
 /**
  * Create a form instance
+ * @example
+ * const form = createForm({
+ *   initialValues: { username: '', age: 0 },
+ *   onSubmit: async (values) => { await api.post('/user', values) }
+ * })
  */
-export function createForm<T>(options: FormOptions<T>): FormInstance<T> {
-  const useStore = createFormStore<T>(options)
+export function createForm<T extends FormValues>(
+  options: CreateFormOptions<T>
+): FormInstance<T> {
+  // Create Zustand store
+  const useStore = createFormStore<T>(options.initialValues || ({} as T))
 
-  // Store methods
-  const getStore = (): FormState<T> => useStore.getState()
+  // Get current store state helper
+  const getState = () => useStore.getState()
 
-  const subscribe = (listener: () => void): (() => void) => useStore.subscribe(listener)
+  return {
+    // Access to store
+    _store: useStore,
 
-  const batch = (fn: () => void): void => {
-    const api = useStore.getState()
-    api.batch(fn)
-  }
+    // Get form state
+    get state(): FormState<T> {
+      return getState()
+    },
 
-  // Form instance methods
-  const getValues = (): T => {
-    const state = getStore()
-    return state.values
-  }
+    // Values
+    get values(): T {
+      return getState().values
+    },
+    setValues: (values) => useStore.getState().setValues(values),
+    setValue: (path, value) => useStore.getState().setValue(path, value),
 
-  const getSubmitValues = (): T => {
-    const state = getStore()
-    const values = { ...state.values } as T
+    // Errors
+    get errors(): Record<string, any> {
+      return getState().errors
+    },
+    setError: (path, error) => useStore.getState().setFieldError(path, error),
+    clearError: (path) => useStore.getState().clearFieldError(path),
+    clearErrors: () => useStore.getState().clearAllErrors(),
 
-    Object.entries(state.fields).forEach(([_, entry]) => {
-      if (entry.transient && entry.path) {
-        deletePath(values as Record<string, unknown>, entry.path)
-      }
-    })
+    // Touched
+    get touched(): Record<string, boolean> {
+      return getState().touched
+    },
+    setTouched: (path, touched) => useStore.getState().setFieldTouched(path, touched),
 
-    return values
-  }
+    // Dirty
+    get dirty(): Record<string, boolean> {
+      return getState().dirty
+    },
+    setDirty: (path, dirty) => useStore.getState().setFieldDirty(path, touched),
 
-  const setValues = (values: Partial<T>): void => {
-    useStore.getState().setValues(values)
-  }
+    // Form status
+    get isDirty(): boolean {
+      return getState().isDirty
+    },
+    get isValid(): boolean {
+      return getState().isValid
+    },
+    get isValidating(): boolean {
+      return getState().isValidating
+    },
+    get isSubmitting(): boolean {
+      return getState().isSubmitting
+    },
+    get submitCount(): number {
+      return getState().submitCount
+    },
 
-  const getFieldValue = (path: Path): unknown => {
-    const state = getStore()
-    if (path == null || path === '') return state.values
+    // Methods
+    validate: () => useStore.getState().validate(),
+    submit: (onSubmit) => useStore.getState().submit(onSubmit),
+    reset: () => useStore.getState().reset(),
 
-    const parts = path.split('.')
-    let current: unknown = state.values
-
-    for (const part of parts) {
-      if (current == null || current === undefined) return undefined
-      if (typeof current === 'object' && current !== null) {
-        current = (current as Record<string, unknown>)[part]
-      } else {
-        return undefined
-      }
-    }
-
-    return current
-  }
-
-  const setFieldValue = (path: Path, value: unknown): void => {
-    useStore.getState().setFieldValue(path, value)
-  }
-
-  const resetValues = (): void => {
-    useStore.getState().resetValues()
-  }
-
-  const getFieldState = (address: Path) => {
-    const state = getStore()
-    return state.fields[address]?.state
-  }
-
-  const setFieldState = (address: Path, stateUpdate: Partial<FormState['fields'][string]['state']>): void => {
-    useStore.getState().setFieldState(address, stateUpdate)
-  }
-
-  const validate = async (address?: Path): Promise<boolean> => {
-    const state = getStore()
-    const api = useStore.getState()
-
-    if (address) {
-      // Validate specific field
-      const entry = state.fields[address]
-      if (!entry) return true
-
-      const fieldPath = entry.path || address
-      const value = getFieldValue(fieldPath)
-
-      const errors = await validateField(value, entry.rules, {
-        getFieldValue,
-        getFieldState: (p: Path) => {
-          const fieldEntry = state.fields[p]
-          return fieldEntry?.state
-        },
+    // Transient fields
+    addTransientField: (path) => {
+      useStore.setState((state) => state.transientFields.add(path))
+    },
+    removeTransientField: (path) => {
+      useStore.setState((state) => {
+        state.transientFields.delete(path)
       })
+    },
 
-      api.setFieldErrors(address, errors)
-      return errors.length === 0
-    } else {
-      // Validate all fields
-      let allValid = true
-      const fieldsToValidate = Object.entries(state.fields).filter(
-        ([_, entry]) => !entry.isVoid
-      )
+    // Field hooks (created lazily)
+    _fieldHooks: new Map(),
 
-      for (const [addr, entry] of fieldsToValidate) {
-        const fieldPath = entry.path || addr
-        const value = getFieldValue(fieldPath)
-
-        const errors = await validateField(value, entry.rules, {
-          getFieldValue,
-          getFieldState: (p: Path) => {
-            const fieldEntry = state.fields[p]
-            return fieldEntry?.state
-          },
-        })
-
-        api.setFieldErrors(addr, errors)
-        if (errors.length > 0) allValid = false
-      }
-
-      return allValid
-    }
+    // Get or create field hook
+    useField: <P>(path: string): UseFieldReturn<P> => {
+      // TODO: Implement useField hook
+      throw new Error('useField hook not implemented yet')
+    },
   }
-
-  const clearErrors = (address?: Path): void => {
-    useStore.getState().clearFieldErrors(address)
-  }
-
-  const submit = async (onSubmit?: (values: T) => Promise<void> | void): Promise<void> => {
-    const api = useStore.getState()
-    const isValid = await validate()
-
-    if (!isValid) {
-      return
-    }
-
-    api.setSubmitting(true)
-    api.incrementSubmitCount()
-
-    if (onSubmit) {
-      try {
-        await onSubmit(getSubmitValues())
-      } catch (e) {
-        console.error('Submit error:', e)
-        throw e
-      }
-    }
-
-    api.setSubmitting(false)
-  }
-
-  // Create form instance that also implements ZustandStore interface
-  // This allows useStore(form, selector) to work
-  const formInstance = {
-    // Value operations
-    getValues,
-    getSubmitValues,
-    setValues,
-    getFieldValue,
-    setFieldValue,
-    resetValues,
-
-    // Field state operations
-    getFieldState,
-    setFieldState,
-
-    // Validation
-    validate,
-    clearErrors,
-
-    // Submission
-    submit,
-
-    // Store access - make compatible with Zustand's useStore
-    getState: getStore,
-    getStore, // Alias for getState (FormInstance API)
-    subscribe,
-
-    // Batch
-    batch,
-  } as FormInstance<T>
-
-  return formInstance
 }

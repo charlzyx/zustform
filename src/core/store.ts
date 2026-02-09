@@ -1,368 +1,225 @@
 /**
  * @module core/store
- * @description Zustand store for form state management with Immer
+ * @description Zustand store implementation for form state management
  */
 
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import type {
-  FormState,
-  FormOptions,
-  Path,
-  FieldEntry,
-  FieldState,
-  ValidateTrigger,
-} from './types'
-import { deepClone } from './path'
+import type { FormState, FormValues, FieldErrors } from './types'
+import { runValidation } from './validation'
 
 /**
- * Create a form store with Zustand + Immer
+ * Zustand store middleware type
  */
-export function createFormStore<T>(options: FormOptions<T>) {
-  type Store = FormState<T> & {
-    // === Value mutations ===
+type FormStore = FormState & {
+  // Values operations
+  setValue: <T extends FormValues>(path: string, value: T) => void
+  setValues: <T extends FormValues>(values: T) => void
+  setFieldValue: <T extends FormValues>(path: string, updater: (current: T) => T) => void
 
-    /** Set multiple values */
-    setValues: (values: Partial<T>) => void
-    /** Set a single field value */
-    setFieldValue: (path: Path, value: unknown) => void
-    /** Reset all values to initial */
-    resetValues: () => void
+  // Errors operations
+  setFieldError: (path: string, error: FieldErrors | undefined) => void
+  clearFieldError: (path: string) => void
+  clearAllErrors: () => void
 
-    // === Field registration ===
+  // Form operations
+  validate: () => Promise<boolean>
+  submit: <T>(onSubmit: (values: FormValues) => Promise<T> | T) => Promise<void>
+  reset: () => void
 
-    /** Register a field */
-    registerField: (address: Path, entry: FieldEntry) => void
-    /** Unregister a field */
-    unregisterField: (address: Path) => void
-    /** Mark field as mounted/unmounted */
-    setFieldMounted: (address: Path, mounted: boolean) => void
+  // Dirty operations
+  setFieldTouched: (path: string, touched: boolean) => void
+  setFieldDirty: (path: string, dirty: boolean) => void
+}
 
-    // === Field state mutations ===
+/**
+ * Helper to get nested value from object
+ */
+function get<T>(obj: any, path: string): T {
+  return path.split('.').reduce((acc, part) => acc?.[part], obj)
+}
 
-    /** Set field state */
-    setFieldState: (address: Path, state: Partial<FieldState>) => void
-    /** Set field errors */
-    setFieldErrors: (address: Path, errors: string[]) => void
-    /** Clear field errors */
-    clearFieldErrors: (address?: Path) => void
+/**
+ * Helper to set nested value in object
+ */
+function set<T>(obj: any, path: string, value: T): void {
+  const keys = path.split('.')
+  const lastKey = keys.pop()!
+  const target = keys.reduce((acc, key) => acc[key] = acc[key] || {}, obj)
+  target[lastKey] = value
+}
 
-    // === Form meta mutations ===
+/**
+ * Helper to check if nested path exists
+ */
+function has(obj: any, path: string): boolean {
+  return path.split('.').every((part) => {
+    if (!obj || typeof obj !== 'object') return false
+    if (!Object.prototype.hasOwnProperty.call(obj, part)) {
+      if (typeof obj[part] === 'undefined') return false
+    }
+    obj = obj[part]
+    return true
+  })
+}
 
-    /** Set submitting state */
-    setSubmitting: (submitting: boolean) => void
-    /** Increment submit count */
-    incrementSubmitCount: () => void
-    /** Update form meta state */
-    updateMeta: (meta: Partial<FormState['meta']>) => void
-
-    // === Batch updates ===
-
-    /** Batch multiple state updates */
-    batch: (fn: () => void) => void
+/**
+ * Helper to delete nested path
+ */
+function del(obj: any, path: string): void {
+  const keys = path.split('.')
+  const lastKey = keys.pop()!
+  const target = keys.reduce((acc, key) => acc?.[key], obj)
+  if (target && typeof target === 'object' && lastKey in target) {
+    delete target[lastKey]
   }
+}
 
-  const defaultValidateTrigger: ValidateTrigger | ValidateTrigger[] =
-    options.validateTrigger || 'change'
-
-  return create<Store>()(
+/**
+ * Create a Zustand store for form state
+ */
+export function createFormStore<T extends FormValues>(initialValues: T) {
+  return create<FormStore>()(
     immer((set, get) => ({
-      // === Initial state ===
+      // Initial state
+      values: initialValues,
+      errors: {},
+      touched: {},
+      dirty: {},
+      isValidating: false,
+      isSubmitting: false,
+      isDirty: false,
+      isValid: true,
+      submitCount: 0,
+      transientFields: new Set(),
 
-      values: options.initialValues,
-      initialValues: options.initialValues,
-      fields: {},
-      meta: {
-        submitting: false,
-        submitCount: 0,
-        validating: false,
-        dirty: false,
-        valid: true,
-        validateTrigger: defaultValidateTrigger,
-      },
-
-      // === Value mutations ===
-
-      setValues: (values) =>
+      // Values operations
+      setValue: <V>(path: string, value: V) =>
         set((state) => {
-          Object.assign(state.values, values)
-          state.meta.dirty = !deepEqual(state.values, state.initialValues)
-        }),
-
-      setFieldValue: (path, value) =>
-        set((state) => {
-          setNestedValue(state.values as Record<string, unknown>, path, value)
-          state.meta.dirty = !deepEqual(state.values, state.initialValues)
-        }),
-
-      resetValues: () =>
-        set((state) => {
-          state.values = deepClone(state.initialValues)
-          state.meta.dirty = false
-          // Clear all field errors
-          Object.values(state.fields).forEach((entry) => {
-            entry.state.errors = []
-            entry.state.warnings = []
-            entry.state.touched = false
-            entry.state.dirty = false
-          })
-        }),
-
-      // === Field registration ===
-
-      registerField: (address, entry) =>
-        set((state) => {
-          // Get existing entry or create new one
-          const existing = state.fields[address]
-          const existingValue = existing?.path
-            ? getNestedValue(state.values as Record<string, unknown>, existing.path)
-            : undefined
-
-          state.fields[address] = {
-            ...entry,
-            // Use existing state if available, otherwise use entry's state or create default
-            state: existing?.state || entry.state || createInitialFieldState(),
-            mounted: true,
-          }
-
-          // Set default value if provided and value doesn't exist
-          if (entry.defaultValue !== undefined && entry.path && existingValue === undefined) {
-            setNestedValue(state.values as Record<string, unknown>, entry.path, entry.defaultValue)
+          set(state.values, path, value as T[keyof T])
+          // Mark field as dirty
+          set(state.dirty, path, true)
+          // Check if form is dirty
+          state.isDirty = true
+          // Clear field error on change
+          if (has(state.errors, path)) {
+            del(state.errors, path)
+            state.isValid = Object.keys(state.errors).length === 0
           }
         }),
 
-      unregisterField: (address) =>
+      setValues: (values: T) =>
         set((state) => {
-          const entry = state.fields[address]
-          if (entry && !entry.preserveValue) {
-            // Remove field entry
-            delete state.fields[address]
-            // Clear value if it's a data field
-            if (entry.path && !entry.isVoid) {
-              deleteNestedValue(state.values as Record<string, unknown>, entry.path)
-            }
-          } else if (entry) {
-            // Just mark as unmounted
-            entry.mounted = false
-          }
+          state.values = { ...state.values, ...values }
         }),
 
-      setFieldMounted: (address, mounted) =>
+      setFieldValue: <V>(path: string, updater: (current: V) => V) =>
         set((state) => {
-          const entry = state.fields[address]
-          if (entry) {
-            entry.mounted = mounted
-          }
+          const current = get<V>(state.values, path)
+          const next = updater(current)
+          set(state.values, path, next as T[keyof T])
         }),
 
-      // === Field state mutations ===
-
-      setFieldState: (address, partialState) =>
+      // Errors operations
+      setFieldError: (path: string, error) =>
         set((state) => {
-          const entry = state.fields[address]
-          if (entry) {
-            Object.assign(entry.state, partialState)
-          }
-        }),
-
-      setFieldErrors: (address, errors) =>
-        set((state) => {
-          const entry = state.fields[address]
-          if (entry) {
-            entry.state.errors = errors
-            entry.state.validating = false
-          }
-          updateFormValid(state)
-        }),
-
-      clearFieldErrors: (address) =>
-        set((state) => {
-          if (address) {
-            const entry = state.fields[address]
-            if (entry) {
-              entry.state.errors = []
-            }
+          if (error === undefined || error === null) {
+            del(state.errors, path)
           } else {
-            // Clear all field errors
-            Object.values(state.fields).forEach((entry) => {
-              entry.state.errors = []
-            })
+            set(state.errors, path, error)
           }
-          updateFormValid(state)
+          state.isValid = Object.keys(state.errors).length === 0
         }),
 
-      // === Form meta mutations ===
-
-      setSubmitting: (submitting) =>
+      clearFieldError: (path: string) =>
         set((state) => {
-          state.meta.submitting = submitting
+          if (has(state.errors, path)) {
+            del(state.errors, path)
+            state.isValid = Object.keys(state.errors).length === 0
+          }
         }),
 
-      incrementSubmitCount: () =>
+      clearAllErrors: () =>
         set((state) => {
-          state.meta.submitCount++
+          state.errors = {}
+          state.isValid = true
         }),
 
-      updateMeta: (meta) =>
+      // Form operations
+      validate: async () => {
+        const state = get()
+        set({ isValidating: true })
+
+        // Run validation (placeholder - will use schema)
+        const errors = await runValidation(state.values, {})
+
         set((state) => {
-          Object.assign(state.meta, meta)
-        }),
+          state.errors = errors
+          state.isValidating = false
+          state.isValid = Object.keys(errors).length === 0
+        })
 
-      // === Batch updates ===
-
-      batch: (fn) => {
-        // Execute the function - each inner set() will trigger a state update
-        // Note: For true batching, you'd need to accumulate mutations and apply them in a single set()
-        fn()
+        return Object.keys(errors).length === 0
       },
+
+      submit: async <T>(onSubmit: (values: T) => Promise<T> | T) => {
+        const state = get()
+        set({ isSubmitting: true })
+
+        try {
+          // Validate before submit
+          const isValid = await get().validate()
+
+          if (!isValid) {
+            set({ isSubmitting: false })
+            return
+          }
+
+          // Filter transient fields
+          const submitValues = Object.fromEntries(
+            Object.entries(state.values).filter(([key]) => !state.transientFields.has(key))
+          ) as T
+
+          await onSubmit(submitValues)
+
+          set((state) => {
+            state.isSubmitting = false
+            state.submitCount += 1
+            state.isDirty = false
+            state.dirty = {}
+          })
+        } catch (error) {
+          set({ isSubmitting: false })
+          throw error
+        }
+      },
+
+      reset: () =>
+        set((state) => {
+          state.values = { ...initialValues }
+          state.errors = {}
+          state.touched = {}
+          state.dirty = {}
+          state.isDirty = false
+          state.isValid = true
+        }),
+
+      // Dirty operations
+      setFieldTouched: (path: string, touched: boolean) =>
+        set((state) => {
+          set(state.touched, path, touched)
+        }),
+
+      setFieldDirty: (path: string, dirty: boolean) =>
+        set((state) => {
+          set(state.dirty, path, dirty)
+          state.isDirty = Object.values(state.dirty).some(Boolean)
+        }),
     }))
   )
 }
 
 /**
- * Create initial field state
+ * Type for the store created by createFormStore
  */
-function createInitialFieldState(): FieldState {
-  return {
-    touched: false,
-    active: false,
-    dirty: false,
-    visible: true,
-    disabled: false,
-    readOnly: false,
-    validating: false,
-    errors: [],
-    warnings: [],
-  }
-}
-
-/**
- * Set nested value by dot-notation path
- */
-function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
-  if (!path) return
-
-  const parts = path.split('.')
-  let current: any = obj
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i]
-
-    if (!(part in current) || current[part] == null) {
-      // Check if next segment is a number (array index)
-      const nextSegment = parts[i + 1]
-      const isNextNumeric = /^\d+$/.test(nextSegment)
-
-      current[part] = isNextNumeric ? [] : {}
-    }
-
-    current = current[part]
-
-    if (typeof current !== 'object' || current === null) {
-      // Path conflict - cannot traverse into primitive
-      current[part] = {}
-      current = current[part]
-    }
-  }
-
-  const lastPart = parts[parts.length - 1]
-  current[lastPart] = value
-}
-
-/**
- * Delete nested value by dot-notation path
- */
-function deleteNestedValue(obj: Record<string, unknown>, path: string): void {
-  if (!path) return
-
-  const parts = path.split('.')
-  let current: any = obj
-
-  // Navigate to parent
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i]
-    if (current == null || typeof current !== 'object') return
-    current = current[part]
-  }
-
-  if (current == null || typeof current !== 'object') return
-
-  const lastPart = parts[parts.length - 1]
-  if (Array.isArray(current)) {
-    const index = parseInt(lastPart, 10)
-    if (!isNaN(index) && index >= 0 && index < current.length) {
-      current.splice(index, 1)
-    }
-  } else {
-    delete current[lastPart]
-  }
-}
-
-/**
- * Get nested value by dot-notation path
- */
-function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-  if (!path) return obj
-  if (obj == null) return undefined
-
-  const parts = path.split('.')
-  let current: unknown = obj
-
-  for (const part of parts) {
-    if (current == null) return undefined
-    if (typeof current === 'object' && current !== null) {
-      current = (current as Record<string, unknown>)[part]
-    } else {
-      return undefined
-    }
-  }
-
-  return current
-}
-
-/**
- * Deep equality check
- */
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (a == null || b == null) return a === b
-  if (typeof a !== typeof b) return false
-
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) {
-      if (!deepEqual(a[i], b[i])) return false
-    }
-    return true
-  }
-
-  if (Array.isArray(a) !== Array.isArray(b)) return false
-
-  if (typeof a === 'object' && typeof b === 'object') {
-    const keysA = Object.keys(a as Record<string, unknown>)
-    const keysB = Object.keys(b as Record<string, unknown>)
-    if (keysA.length !== keysB.length) return false
-
-    for (const key of keysA) {
-      if (!keysB.includes(key)) return false
-      if (!deepEqual(
-        (a as Record<string, unknown>)[key],
-        (b as Record<string, unknown>)[key]
-      )) {
-        return false
-      }
-    }
-    return true
-  }
-
-  return false
-}
-
-/**
- * Update form valid state based on all field errors
- */
-function updateFormValid(state: FormState): void {
-  state.meta.valid = Object.values(state.fields).every(
-    (entry) => entry.isVoid || entry.state.errors.length === 0
-  )
-}
+export type FormStoreType<T extends FormValues> = ReturnType<typeof createFormStore<T>>

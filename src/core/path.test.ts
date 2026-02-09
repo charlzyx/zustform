@@ -4,448 +4,223 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  parsePath,
-  getPath,
-  setPath,
-  deletePath,
-  hasPath,
-  getPathParent,
-  appendPath,
-  isPathEqual,
-  normalizePath,
-  isDescendant,
-  isAncestor,
-  getLeaf,
-  segmentsToPath,
-  isArrayIndex,
-  traversePaths,
-  deepClone,
-  deepEqual,
-} from './path'
+import { get, set, del, has, getAll, matches, joinPath, splitPath, getFieldName, getParentPath, isRelated } from './path'
 
 describe('path utilities', () => {
-  describe('parsePath', () => {
-    it('should parse a simple path', () => {
-      expect(parsePath('user.name')).toEqual(['user', 'name'])
-    })
-
-    it('should parse an array index path', () => {
-      expect(parsePath('items.0.title')).toEqual(['items', '0', 'title'])
-    })
-
-    it('should handle empty string', () => {
-      expect(parsePath('')).toEqual([])
-    })
-
-    it('should handle single segment', () => {
-      expect(parsePath('user')).toEqual(['user'])
-    })
-  })
-
-  describe('getPath', () => {
-    const obj = {
-      user: {
-        name: 'John',
-        address: {
-          city: 'NYC',
-          country: 'USA',
-        },
+  const obj = {
+    user: {
+      name: 'John',
+      age: 30,
+      address: {
+        street: 'Main St',
+        city: 'New York',
       },
-      items: [
-        { id: 1, title: 'First' },
-        { id: 2, title: 'Second' },
-      ],
-    }
+    },
+    'tags.0': 'tag1',
+    'tags.1': 'tag2',
+    items: [
+      { id: 1, name: 'Item 1' },
+      { id: 2, name: 'Item 2' },
+    ],
+  }
 
-    it('should get a simple path value', () => {
-      expect(getPath(obj, 'user.name')).toBe('John')
+  describe('get', () => {
+    it('should get value from simple path', () => {
+      expect(get(obj, 'user.name')).toBe('John')
+      expect(get(obj, 'user.age')).toBe(30)
     })
 
-    it('should get a nested path value', () => {
-      expect(getPath(obj, 'user.address.city')).toBe('NYC')
-    })
-
-    it('should get an array item', () => {
-      expect(getPath(obj, 'items.0')).toEqual({ id: 1, title: 'First' })
-    })
-
-    it('should get a nested array item property', () => {
-      expect(getPath(obj, 'items.0.title')).toBe('First')
+    it('should get value from nested path', () => {
+      expect(get(obj, 'user.address.street')).toBe('Main St')
+      expect(get(obj, 'user.address.city')).toBe('New York')
     })
 
     it('should return undefined for missing path', () => {
-      expect(getPath(obj, 'user.missing')).toBeUndefined()
-    })
-
-    it('should return the object for empty path', () => {
-      expect(getPath(obj, '')).toEqual(obj)
-    })
-
-    it('should handle null object', () => {
-      expect(getPath(null, 'user.name')).toBeUndefined()
+      expect(get(obj, 'user.email')).toBeUndefined()
+      expect(get(obj, 'user.address.zip')).toBeUndefined()
     })
   })
 
-  describe('setPath', () => {
-    it('should set a simple path value', () => {
-      const obj: Record<string, unknown> = {}
-      setPath(obj, 'name', 'John')
-      expect(obj.name).toBe('John')
+  describe('set', () => {
+    it('should set value for simple path', () => {
+      const newObj = {}
+      set(newObj, 'user.name', 'Jane')
+      expect(newObj.user.name).toBe('Jane')
     })
 
-    it('should set a nested path value', () => {
-      const obj: Record<string, unknown> = {}
-      setPath(obj, 'user.name', 'John')
-      expect(obj.user?.name).toBe('John')
+    it('should set value for nested path', () => {
+      const newObj = {}
+      set(newObj, 'user.address.street', 'Second St')
+      expect(newObj.user.address.street).toBe('Second St')
     })
 
-    it('should set an array item', () => {
-      const obj: Record<string, unknown> = {}
-      setPath(obj, 'items.0', 'First')
-      expect(Array.isArray(obj.items)).toBe(true)
-      expect(obj.items?.[0]).toBe('First')
+    it('should create intermediate objects', () => {
+      const newObj = {}
+      set(newObj, 'a.b.c.d', 1)
+      expect(newObj.a.b.c.d).toBe(1)
     })
 
-    it('should overwrite existing values', () => {
-      const obj = { user: { name: 'Jane' } }
-      setPath(obj, 'user.name', 'John')
-      expect(obj.user.name).toBe('John')
-    })
-
-    it('should return the modified object', () => {
-      const obj = {}
-      const result = setPath(obj, 'name', 'John')
-      expect(result).toBe(obj)
+    it('should preserve existing values', () => {
+      const newObj = { user: { name: 'John' } }
+      set(newObj, 'user.age', 30)
+      expect(newObj.user.name).toBe('John')
+      expect(newObj.user.age).toBe(30)
     })
   })
 
-  describe('deletePath', () => {
-    it('should delete a simple path value', () => {
-      const obj = { name: 'John', age: 30 }
-      const result = deletePath(obj, 'name')
-      expect(result).toBe(true)
-      expect(obj.name).toBeUndefined()
-      expect(obj.age).toBe(30)
+  describe('del', () => {
+    it('should delete value for simple path', () => {
+      const newObj = { user: { name: 'John', age: 30 } }
+      del(newObj, 'user.age')
+      expect(newObj.user.age).toBeUndefined()
+      expect(newObj.user.name).toBe('John')
     })
 
-    it('should delete a nested path value', () => {
-      const obj = { user: { name: 'John', age: 30 } }
-      const result = deletePath(obj, 'user.name')
-      expect(result).toBe(true)
-      expect(obj.user.name).toBeUndefined()
-      expect(obj.user.age).toBe(30)
+    it('should delete value for nested path', () => {
+      const newObj = { user: { address: { street: 'Main St', city: 'NY' } } }
+      del(newObj, 'user.address.street')
+      expect(newObj.user.address.street).toBeUndefined()
+      expect(newObj.user.address.city).toBe('NY')
     })
 
-    it('should return false for missing path', () => {
-      const obj = { name: 'John' }
-      const result = deletePath(obj, 'missing')
-      expect(result).toBe(false)
-    })
-
-    it('should return false for empty path', () => {
-      const obj = { name: 'John' }
-      const result = deletePath(obj, '')
-      expect(result).toBe(false)
+    it('should not throw for missing path', () => {
+      const newObj = {}
+      expect(() => del(newObj, 'user.name')).not.toThrow()
     })
   })
 
-  describe('hasPath', () => {
-    const obj = { user: { name: 'John' } }
-
-    it('should return true for existing path', () => {
-      expect(hasPath(obj, 'user.name')).toBe(true)
+  describe('has', () => {
+    it('should return true for existing paths', () => {
+      expect(has(obj, 'user.name')).toBe(true)
+      expect(has(obj, 'user.address.street')).toBe(true)
     })
 
-    it('should return false for missing path', () => {
-      expect(hasPath(obj, 'user.missing')).toBe(false)
-    })
-  })
-
-  describe('getPathParent', () => {
-    it('should get parent path', () => {
-      expect(getPathParent('user.name')).toBe('user')
+    it('should return false for missing paths', () => {
+      expect(has(obj, 'user.email')).toBe(false)
+      expect(has(obj, 'user.address.zip')).toBe(false)
     })
 
-    it('should get parent path for deeply nested', () => {
-      expect(getPathParent('user.address.city')).toBe('user.address')
-    })
-
-    it('should return empty string for single segment', () => {
-      expect(getPathParent('user')).toBe('')
-    })
-
-    it('should return empty string for empty path', () => {
-      expect(getPathParent('')).toBe('')
+    it('should handle undefined values', () => {
+      const objWithUndefined = { user: { email: undefined } }
+      expect(has(objWithUndefined, 'user.email')).toBe(false)
     })
   })
 
-  describe('appendPath', () => {
-    it('should append segment to path', () => {
-      expect(appendPath('user', 'name')).toBe('user.name')
+  describe('getAll', () => {
+    it('should get all values matching prefix', () => {
+      const result = getAll(obj, 'tags')
+      expect(result).toEqual({ '0': 'tag1', '1': 'tag2' })
     })
 
-    it('should append to nested path', () => {
-      expect(appendPath('user.address', 'city')).toBe('user.address.city')
+    it('should get nested values matching prefix', () => {
+      const result = getAll(obj, 'user.address')
+      expect(result).toEqual({ street: 'Main St', city: 'New York' })
     })
 
-    it('should handle empty base path', () => {
-      expect(appendPath('', 'user')).toBe('user')
-    })
-  })
-
-  describe('isPathEqual', () => {
-    it('should return true for equal paths', () => {
-      expect(isPathEqual('user.name', 'user.name')).toBe(true)
-    })
-
-    it('should return false for different paths', () => {
-      expect(isPathEqual('user.name', 'user.address')).toBe(false)
-    })
-
-    it('should normalize paths before comparing', () => {
-      expect(isPathEqual('user.name', '.user.name.')).toBe(true)
+    it('should return empty object for no matches', () => {
+      const result = getAll(obj, 'nonexistent')
+      expect(result).toEqual({})
     })
   })
 
-  describe('normalizePath', () => {
-    it('should normalize path', () => {
-      expect(normalizePath('user.name')).toBe('user.name')
+  describe('matches', () => {
+    it('should return true for child paths', () => {
+      expect(matches('user.name', 'user')).toBe(true)
+      expect(matches('user.address.street', 'user')).toBe(true)
     })
 
-    it('should remove extra dots', () => {
-      expect(normalizePath('.user.name.')).toBe('user.name')
-    })
-
-    it('should handle empty string', () => {
-      expect(normalizePath('')).toBe('')
-    })
-
-    it('should remove empty segments', () => {
-      expect(normalizePath('user..name')).toBe('user.name')
-    })
-  })
-
-  describe('isDescendant', () => {
-    it('should return true for descendant', () => {
-      expect(isDescendant('user.address.city', 'user')).toBe(true)
-    })
-
-    it('should return true for direct child', () => {
-      expect(isDescendant('user.name', 'user')).toBe(true)
+    it('should return true for sibling paths', () => {
+      expect(matches('user.name', 'user.age')).toBe(true)
+      expect(matches('user.name', 'user.address')).toBe(true)
     })
 
     it('should return false for same path', () => {
-      expect(isDescendant('user.name', 'user.name')).toBe(false)
+      expect(matches('user', 'user')).toBe(false)
+      expect(matches('user.name', 'user.name')).toBe(false)
     })
 
-    it('should return false for unrelated paths', () => {
-      expect(isDescendant('user.name', 'user.address')).toBe(false)
-    })
-
-    it('should return true for empty ancestor', () => {
-      expect(isDescendant('user.name', '')).toBe(true)
+    it('should return false for parent path', () => {
+      expect(matches('user', 'user.name')).toBe(false)
     })
   })
 
-  describe('isAncestor', () => {
-    it('should return true for ancestor', () => {
-      expect(isAncestor('user', 'user.address.city')).toBe(true)
-    })
-
-    it('should return false for same path', () => {
-      expect(isAncestor('user.name', 'user.name')).toBe(false)
-    })
-  })
-
-  describe('getLeaf', () => {
-    it('should get leaf segment', () => {
-      expect(getLeaf('user.name')).toBe('name')
-    })
-
-    it('should get leaf from nested path', () => {
-      expect(getLeaf('user.address.city')).toBe('city')
-    })
-
-    it('should return same for single segment', () => {
-      expect(getLeaf('user')).toBe('user')
-    })
-
-    it('should return empty for empty path', () => {
-      expect(getLeaf('')).toBe('')
-    })
-  })
-
-  describe('segmentsToPath', () => {
-    it('should convert segments to path', () => {
-      expect(segmentsToPath(['user', 'name'])).toBe('user.name')
-    })
-
-    it('should handle array index', () => {
-      expect(segmentsToPath(['items', '0', 'title'])).toBe('items.0.title')
+  describe('joinPath', () => {
+    it('should join path segments', () => {
+      expect(joinPath('user', 'name')).toBe('user.name')
+      expect(joinPath('user', 'address', 'street')).toBe('user.address.street')
     })
 
     it('should filter empty segments', () => {
-      expect(segmentsToPath(['user', '', 'name'])).toBe('user.name')
+      expect(joinPath('user', '', 'name')).toBe('user.name')
+      expect(joinPath('', 'user', 'name')).toBe('user.name')
+      expect(joinPath('user', undefined, null, 'name')).toBe('user.name')
+    })
+
+    it('should return empty string for no segments', () => {
+      expect(joinPath()).toBe('')
+      expect(joinPath('', null, undefined)).toBe('')
     })
   })
 
-  describe('isArrayIndex', () => {
-    it('should return true for numeric strings', () => {
-      expect(isArrayIndex('0')).toBe(true)
-      expect(isArrayIndex('42')).toBe(true)
-      expect(isArrayIndex('123')).toBe(true)
+  describe('splitPath', () => {
+    it('should split path into segments', () => {
+      expect(splitPath('user.name')).toEqual(['user', 'name'])
+      expect(splitPath('user.address.street')).toEqual(['user', 'address', 'street'])
     })
 
-    it('should return false for negative numbers', () => {
-      expect(isArrayIndex('-1')).toBe(false)
+    it('should return array with single element for simple path', () => {
+      expect(splitPath('user')).toEqual(['user'])
     })
 
-    it('should return false for non-numeric', () => {
-      expect(isArrayIndex('abc')).toBe(false)
-      expect(isArrayIndex('0abc')).toBe(false)
-      expect(isArrayIndex('abc0')).toBe(false)
-    })
-
-    it('should return false for empty string', () => {
-      expect(isArrayIndex('')).toBe(false)
+    it('should return empty array for empty path', () => {
+      expect(splitPath('')).toEqual([])
     })
   })
 
-  describe('traversePaths', () => {
-    const obj = {
-      user: {
-        name: 'John',
-        age: 30,
-        address: {
-          city: 'NYC',
-          country: 'USA',
-        },
-      },
-      items: [
-        { id: 1, title: 'First' },
-        { id: 2, title: 'Second' },
-      ],
-    }
-
-    it('should traverse all paths in object', () => {
-      const paths = Array.from(traversePaths(obj))
-      expect(paths).toContain('user.name')
-      expect(paths).toContain('user.age')
-      expect(paths).toContain('user.address.city')
-      expect(paths).toContain('user.address.country')
-      expect(paths).toContain('items.0.id')
-      expect(paths).toContain('items.0.title')
-      expect(paths).toContain('items.1.id')
-      expect(paths).toContain('items.1.title')
+  describe('getFieldName', () => {
+    it('should get last segment of path', () => {
+      expect(getFieldName('user.name')).toBe('name')
+      expect(getFieldName('user.address.street')).toBe('street')
     })
 
-    it('should handle nested objects', () => {
-      const nested = { a: { b: { c: 1 } } }
-      const paths = Array.from(traversePaths(nested))
-      expect(paths).toContain('a.b.c')
-    })
-
-    it('should handle arrays', () => {
-      const arr = [1, 2, 3]
-      const paths = Array.from(traversePaths(arr))
-      expect(paths).toContain('0')
-      expect(paths).toContain('1')
-      expect(paths).toContain('2')
+    it('should return simple name for simple path', () => {
+      expect(getFieldName('user')).toBe('user')
     })
   })
 
-  describe('deepClone', () => {
-    it('should clone primitives', () => {
-      expect(deepClone('string')).toBe('string')
-      expect(deepClone(123)).toBe(123)
-      expect(deepClone(true)).toBe(true)
-      expect(deepClone(null)).toBe(null)
-      expect(deepClone(undefined)).toBe(undefined)
+  describe('getParentPath', () => {
+    it('should get parent path', () => {
+      expect(getParentPath('user.name')).toBe('user')
+      expect(getParentPath('user.address.street')).toBe('user.address')
     })
 
-    it('should clone arrays', () => {
-      const arr = [1, 2, 3]
-      const cloned = deepClone(arr)
-      expect(cloned).toEqual(arr)
-      expect(cloned).not.toBe(arr)
+    it('should return empty string for simple path', () => {
+      expect(getParentPath('user')).toBe('')
     })
 
-    it('should clone nested arrays', () => {
-      const arr = [[1, 2], [3, 4]]
-      const cloned = deepClone(arr)
-      expect(cloned).toEqual(arr)
-      expect(cloned).not.toBe(arr)
-      expect(cloned[0]).not.toBe(arr[0])
-    })
-
-    it('should clone objects', () => {
-      const obj = { a: 1, b: 2 }
-      const cloned = deepClone(obj)
-      expect(cloned).toEqual(obj)
-      expect(cloned).not.toBe(obj)
-    })
-
-    it('should clone nested objects', () => {
-      const obj = { a: { b: { c: 1 } } }
-      const cloned = deepClone(obj)
-      expect(cloned).toEqual(obj)
-      expect(cloned).not.toBe(obj)
-      expect(cloned.a).not.toBe(obj.a)
-    })
-
-    it('should clone Date objects', () => {
-      const date = new Date('2024-01-01')
-      const cloned = deepClone(date)
-      expect(cloned).toEqual(date)
-      expect(cloned).not.toBe(date)
+    it('should return empty string for empty path', () => {
+      expect(getParentPath('')).toBe('')
     })
   })
 
-  describe('deepEqual', () => {
-    it('should return true for equal primitives', () => {
-      expect(deepEqual('string', 'string')).toBe(true)
-      expect(deepEqual(123, 123)).toBe(true)
-      expect(deepEqual(true, true)).toBe(true)
-      expect(deepEqual(null, null)).toBe(true)
-      expect(deepEqual(undefined, undefined)).toBe(true)
+  describe('isRelated', () => {
+    it('should return true for same path', () => {
+      expect(isRelated('user.name', 'user.name')).toBe(true)
     })
 
-    it('should return false for unequal primitives', () => {
-      expect(deepEqual('string', 'other')).toBe(false)
-      expect(deepEqual(123, 456)).toBe(false)
-      expect(deepEqual(true, false)).toBe(false)
-      expect(deepEqual(null, undefined)).toBe(false)
+    it('should return true for ancestor/descendant', () => {
+      expect(isRelated('user.name', 'user')).toBe(true)
+      expect(isRelated('user', 'user.name')).toBe(true)
+      expect(isRelated('user.address.street', 'user')).toBe(true)
     })
 
-    it('should return true for equal arrays', () => {
-      expect(deepEqual([1, 2, 3], [1, 2, 3])).toBe(true)
+    it('should return true for sibling paths', () => {
+      expect(isRelated('user.name', 'user.age')).toBe(true)
+      expect(isRelated('user.name', 'user.address')).toBe(true)
     })
 
-    it('should return false for unequal arrays', () => {
-      expect(deepEqual([1, 2, 3], [1, 2, 4])).toBe(false)
-      expect(deepEqual([1, 2, 3], [1, 2])).toBe(false)
-    })
-
-    it('should return true for equal nested arrays', () => {
-      expect(deepEqual([[1, 2], [3, 4]], [[1, 2], [3, 4]])).toBe(true)
-    })
-
-    it('should return true for equal objects', () => {
-      expect(deepEqual({ a: 1, b: 2 }, { a: 1, b: 2 })).toBe(true)
-    })
-
-    it('should return false for unequal objects', () => {
-      expect(deepEqual({ a: 1, b: 2 }, { a: 1, b: 3 })).toBe(false)
-      expect(deepEqual({ a: 1, b: 2 }, { a: 1 })).toBe(false)
-    })
-
-    it('should return true for equal nested objects', () => {
-      expect(deepEqual({ a: { b: { c: 1 } } }, { a: { b: { c: 1 } } })).toBe(true)
-    })
-
-    it('should return false for different types', () => {
-      expect(deepEqual([1, 2, 3], { '0': 1, '1': 2, '2': 3 })).toBe(false)
+    it('should return false for unrelated paths', () => {
+      expect(isRelated('user.name', 'other.name')).toBe(false)
     })
   })
 })
