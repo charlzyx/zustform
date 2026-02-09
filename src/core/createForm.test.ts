@@ -283,6 +283,47 @@ describe('createForm', () => {
     })
 
     it('should clear all errors', () => {
+      const store = form.getStore()
+      // Register fields first
+      store.registerField('username', {
+        address: 'username',
+        path: 'username',
+        isVoid: false,
+        transient: false,
+        rules: [],
+        mounted: true,
+        state: {
+          touched: false,
+          active: false,
+          dirty: false,
+          visible: true,
+          disabled: false,
+          readOnly: false,
+          validating: false,
+          errors: [],
+          warnings: [],
+        },
+      })
+      store.registerField('email', {
+        address: 'email',
+        path: 'email',
+        isVoid: false,
+        transient: false,
+        rules: [],
+        mounted: true,
+        state: {
+          touched: false,
+          active: false,
+          dirty: false,
+          visible: true,
+          disabled: false,
+          readOnly: false,
+          validating: false,
+          errors: [],
+          warnings: [],
+        },
+      })
+
       form.setFieldState('username', { errors: ['Error'] })
       form.setFieldState('email', { errors: ['Email Error'] })
 
@@ -347,6 +388,8 @@ describe('createForm', () => {
     })
 
     it('should increment submit count', async () => {
+      form.setFieldValue('username', 'John') // Make validation pass
+
       await form.submit()
       await form.submit()
 
